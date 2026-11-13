@@ -120,7 +120,8 @@ async fn get_history(
     ))
 }
 
-const DEFAULT_SENSORS_CMD: &str = "uv run --project sensors python sensors/sensors.py";
+// The venv's python directly, not `uv run`: killing a `uv` wrapper can leave a hung python holding the sensors.
+const DEFAULT_SENSORS_CMD: &str = "sensors/.venv/bin/python sensors/sensors.py";
 
 /// The running `sensors.py` child.
 struct Python {

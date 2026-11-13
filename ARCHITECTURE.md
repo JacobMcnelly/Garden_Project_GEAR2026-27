@@ -80,7 +80,7 @@ Rust starts Python and keeps it running. They exchange one line of JSON each way
 - **One request at a time:** if a click and the scheduled read happen together, one waits for the other, so the sensors are never read twice at once.
 - **If Python hangs or crashes:** after 5 seconds Rust stops it and that snapshot is "unavailable". Python is started again the next time a read is needed (at most once a minute plus clicks), and `describe` is sent again.
 - **What Rust accepts:** `null` → nothing saved for that sensor (a gap in the chart). Unknown names and text → dropped and logged. `NaN`/`Inf` aren't valid JSON, so `sensors.py` sends them as `null`. Lines that aren't JSON → logged as warnings and skipped; Rust keeps waiting for the real reply.
-- **Which command starts Python:** set by `GARDEN_SENSORS_CMD`. Default on the Pi: `uv run --project sensors python sensors/sensors.py`.
+- **Which command starts Python:** set by `GARDEN_SENSORS_CMD`. Default on the Pi: `sensors/.venv/bin/python sensors/sensors.py` (the `.venv` that `uv sync` creates). Not `uv run`: when Rust stops a hung Python, it would only stop `uv`, and the real Python could keep holding the sensors.
 
 **When choosing sensors,** check two things:
 - **How often it can be read:** if it's asked too soon, return the last value instead.
