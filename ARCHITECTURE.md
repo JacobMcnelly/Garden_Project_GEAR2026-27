@@ -1,47 +1,48 @@
-# Garden Monitor — Architecture
+# Garden Monitor architecture
 
-A Raspberry Pi 4 reads garden sensors every minute, saves the readings, and runs a website with history charts and a **Read now** button for live values.
+A Raspberry Pi 4 reads the garden sensors every minute, saves the readings, and runs a website with history charts and a **Read now** button for live values.
 
-**Approach:** keep it simple. One program on the Pi, one file that talks to the hardware, one website. Anything extra waits until it's actually needed (see [Add later](#add-later)).
+We keep it simple on purpose. One program runs on the Pi, one Python file talks to the hardware, and the website is plain files. Anything extra waits until we need it, see [Add later](#add-later).
 
-Words like *reading*, *snapshot* and *bucket* have exact meanings here — see [GLOSSARY.md](GLOSSARY.md). Decisions that might look odd are explained in [docs/adr/](docs/adr/).
+Words like *reading*, *snapshot* and *bucket* have exact meanings, listed in [GLOSSARY.md](GLOSSARY.md). Decisions that might look odd are explained in [docs/adr/](docs/adr/).
 
 ## Overview
 
 ```mermaid
 flowchart LR
     subgraph Pi4["Raspberry Pi 4 · one systemd service"]
-        R["garden<br/>Rust binary"] <--> DB[(SQLite)]
-        R <-->|stdin / stdout| P["sensors.py<br/>Python child"]
+        R["garden<br/>Rust program"] <--> DB[(SQLite)]
+        R <-->|stdin / stdout| P["sensors.py<br/>started by Rust"]
     end
     P <--> S[Sensors]
-    R <-->|tailscale serve| B["Browser<br/>React · coss ui"]
+    R <-->|tailscale serve| B["Browser<br/>React website"]
     P -.->|future| PU[Pump]
 ```
 
 | Part | What it does | Who works on it |
 |---|---|---|
-| **Rust program** | The main program. Runs the website, reads sensors every minute, saves data, and keeps the Python script running. | Rust developer |
-| **`sensors.py`** | Only talks to the sensors. We use Python here because most sensor libraries are written for it. | Sensors developer |
-| **Website** | A React app, built on your PC and copied to the Pi as plain files. It runs in the browser and asks the Pi for data. | Website developer |
-| **`db/*.sql`** | The database tables and queries. Rust runs these files as they are. | Database developer |
+| Rust program, `server/` | The main program. Serves the website and the API, reads the sensors every minute, saves the readings, and keeps the Python script running. | Rust developer |
+| `sensors/sensors.py` | Talks to the sensors and nothing else. It's Python because most sensor libraries are written for Python. | Sensors developer |
+| Website, `web/` | A React app. It's built on a PC and copied to the Pi as plain files, then runs in the browser and asks the Pi for data. | Website developer |
+| `db/*.sql` | The tables and queries. Rust runs these files as they are. | Database developer |
+| `deploy/` | Scripts and settings that install the app on the Pi. | Rust developer |
 
-The Rust ↔ Python messages, the API responses, and the `-- in:` / `-- out:` lines at the top of each SQL file are the agreements between these people. Change them only together.
+Three things are agreements between people, so change them only together: the messages between Rust and Python, the API responses, and the `-- in:` / `-- out:` lines at the top of each SQL file.
 
 ## Tech stack
 
 | Part | Tool | Why |
 |---|---|---|
-| Server | Rust (`axum`, `tokio`, `tower-http`) | Very fast, uses little memory (~5–10 MB), ships as one file. |
-| Database | SQLite (`rusqlite`) | A single file on the Pi. No separate database server to run. |
-| Sensors | Python 3.14 + `uv` | Works with the most sensors. |
-| Website | Vite + React + TypeScript + Tailwind v4 + coss ui | Good-looking ready-made components. |
-| Website tooling | bun | Installs packages and runs the build, faster than npm. Only needed on your PC. |
-| Charts | uPlot | The fastest chart library for time data (~50 KB). |
-| Remote access | Tailscale (`tailscale serve`) | Secure access from anywhere with HTTPS, no router setup and no login code to write. |
+| Server | Rust with `axum`, `tokio`, `tower-http` | Uses about 5 to 10 MB of memory and ships as one file. |
+| Database | SQLite through `rusqlite` | A single file on the Pi. No database server to run. |
+| Sensors | Python 3.13 with `uv` | Most sensor libraries are written for Python. 3.13 is the Python that comes with current Raspberry Pi OS. |
+| Website | Vite, React, TypeScript, Tailwind v4, coss ui | coss ui gives us ready-made components that look good. |
+| Website tooling | bun | Installs packages and builds the website. Only needed on a PC, never on the Pi. |
+| Charts | uPlot | About 50 KB and fast with long time series. |
+| Remote access | Tailscale with `tailscale serve` | Private HTTPS access from anywhere. No router setup and no login code to write. |
 | Auto-start | systemd | Built into the Pi. Starts the app on boot and restarts it if it crashes. |
 
-**Memory:** about 30 MB in total (estimate).
+The whole app should use about 30 MB of memory. That's an estimate, not a measurement.
 
 ## How data moves
 
@@ -60,86 +61,109 @@ sequenceDiagram
     Rust-->>Browser: JSON
     Browser->>Rust: GET /api/history?from&to
     Rust->>SQLite: SELECT … GROUP BY bucket
-    Rust-->>Browser: ≤ 1000 points per sensor
+    Rust-->>Browser: at most 1000 points per sensor
 ```
 
-1. **Every minute** (at :00): Rust asks Python for a snapshot and saves it. If a read is late, it is skipped, not caught up.
-2. **Read now:** Rust asks Python for a live snapshot and sends it to the browser. It isn't saved.
-3. **Charts:** Rust reads saved data from SQLite. It never asks Python.
+1. **Every minute**, on the minute, Rust asks Python for a snapshot and saves it. If a minute is missed, Rust skips it and doesn't catch up.
+2. **Read now** asks Python for a live snapshot and sends it to the browser. Nothing is saved.
+3. **Charts** come from the saved data in SQLite. They never ask Python.
 
-**Time:** Rust stamps the whole snapshot with one time (unix seconds, UTC) when it sends `read`. The Pi has no clock battery, so the app waits for the clock to sync before starting ([ADR 0001](docs/adr/0001-wait-for-clock-sync.md)).
+Rust stamps the whole snapshot with one time, in unix seconds UTC, at the moment it sends `read`. The Pi has no clock battery, so after a power cut the app waits until the clock has synced before it starts ([ADR 0001](docs/adr/0001-wait-for-clock-sync.md)).
 
 ## How Rust and Python talk
 
-Rust starts Python and keeps it running. They exchange one line of JSON each way. There are two commands:
+Rust starts Python and keeps it running. Each message is one line of JSON. There are two commands:
 
 | Rust sends | Python replies |
 |---|---|
 | `{"cmd":"describe"}` | Each sensor's name and unit: `{"soil":"%","temp":"°C"}` |
-| `{"cmd":"read"}` | Each sensor's value: `{"soil":41.2,"temp":null}` (`null` = this sensor failed) |
+| `{"cmd":"read"}` | Each sensor's value: `{"soil":41.2,"temp":null}`. `null` means that sensor failed. |
 
-- **One request at a time:** if a click and the scheduled read happen together, one waits for the other, so the sensors are never read twice at once.
-- **If Python hangs or crashes:** after 5 seconds Rust stops it and that snapshot is "unavailable". Python is started again the next time a read is needed (at most once a minute plus clicks), and `describe` is sent again.
-- **What Rust accepts:** `null` → nothing saved for that sensor (a gap in the chart). Unknown names and text → dropped and logged. `NaN`/`Inf` aren't valid JSON, so `sensors.py` sends them as `null`. Lines that aren't JSON → logged as warnings and skipped; Rust keeps waiting for the real reply.
-- **Which command starts Python:** set by `GARDEN_SENSORS_CMD`. Default on the Pi: `sensors/.venv/bin/python sensors/sensors.py` (the `.venv` that `uv sync` creates). Not `uv run`: when Rust stops a hung Python, it would only stop `uv`, and the real Python could keep holding the sensors.
+- **One request at a time.** If someone clicks Read now during the scheduled read, one waits for the other. The sensors are never read twice at once.
+- **If Python hangs or crashes,** Rust stops it after 5 seconds and that snapshot is lost. Rust starts Python again at the next read and sends `describe` again.
+- **What Rust does with the reply.** A `null` value saves nothing for that sensor, which shows as a gap in the chart. Unknown sensor names and non-numbers are dropped and logged. Lines that aren't JSON are logged and skipped, and Rust keeps waiting for the real reply.
+- **Which command starts Python.** On the Pi it's `sensors/.venv/bin/python sensors/sensors.py`, using the `.venv` that `uv sync` creates. The environment variable `GARDEN_SENSORS_CMD` overrides it. We don't use `uv run` here, because when Rust stops a hung Python it would only stop `uv`, and the real Python could keep holding the sensors.
 
-**When choosing sensors,** check two things:
-- **How often it can be read:** if it's asked too soon, return the last value instead.
-- **Probe corrosion:** soil probes that carry current wear out if always powered. Turn them on only while reading.
+When choosing sensors, check two things. First, how often a sensor can be read: if it's asked too soon, return the last value instead. Second, soil probes that carry current corrode if they're always powered, so switch them on only while reading.
 
 ### For the sensors developer
 
-You only need to know Python and `sensors.py`:
+You only need Python. Your file is `sensors/sensors.py`, and the parts to edit are `UNITS` (each sensor's name and unit) and `read_all()` (read every sensor and return its value). The loop at the bottom that talks to Rust is already written.
 
-```python
-# sensors.py
-import json, sys
+Rules:
+- `print()` sends to Rust, so every print must be one JSON reply. Send debug output to stderr with `print(..., file=sys.stderr)` or `logging`.
+- If a sensor fails, return `None` for it. Don't let the script crash.
+- Sensor names are permanent. Renaming `soil` starts a new sensor with no history.
 
-UNITS = {"soil": "%", "temp": "°C"}
-
-def read_all() -> dict:
-    ...  # read each sensor; if one fails, return None for it instead of crashing
-
-for line in sys.stdin:
-    cmd = json.loads(line)["cmd"]
-    if cmd == "describe":
-        print(json.dumps(UNITS), flush=True)
-    elif cmd == "read":
-        print(json.dumps(read_all()), flush=True)
+Try it on your PC, from the `sensors` folder:
+```sh
+uv run sensors.py --fake
 ```
+Type `{"cmd":"read"}` and press Enter. `--fake` returns random values, which also lets the Rust and website developers work without hardware.
 
-- **Test it on its own:** `uv run python sensors.py`, then type `{"cmd":"read"}` and press Enter.
-- **Debug output goes to stderr:** use `print(..., file=sys.stderr)` or `logging`. Plain `print()` talks to Rust.
-- **See errors on the Pi:** `journalctl -u garden -f`
-- **After editing, restart:** `sudo systemctl restart garden`. The old code keeps running until you do.
-- **Sensor names are permanent.** Renaming `soil` starts a new sensor with no history.
-- **`--fake` flag:** `sensors.py --fake` returns random values so the Rust and website developers can work without hardware.
+Add a library with `uv add <package>`. Commit both `pyproject.toml` and `uv.lock`, so the Pi installs the same versions. `.python-version` pins Python 3.13 on every machine.
+
+To try your code on the Pi with the real sensors, run this from the project folder on your PC:
+```sh
+deploy/deploy.sh pi@<pi> sensors
+```
+It copies your code, installs the libraries and restarts the app. Watch the log with `journalctl -u garden -f` on the Pi.
+
+To run the script by hand on the Pi, stop the app first so two programs don't read the sensors at once:
+```sh
+sudo systemctl stop garden
+cd /opt/garden/sensors && sudo -u garden .venv/bin/python sensors.py
+sudo systemctl start garden
+```
 
 ## API
 
-The server listens on `127.0.0.1:8080` only and is reached through `tailscale serve` ([ADR 0002](docs/adr/0002-localhost-behind-tailscale-serve.md)).
+The server listens only on `127.0.0.1:8080`, and people reach it through `tailscale serve` ([ADR 0002](docs/adr/0002-localhost-behind-tailscale-serve.md)).
 
 | Request | Returns |
 |---|---|
 | `GET /` | The website |
-| `GET /api/now` | Live snapshot (not saved) |
+| `GET /api/now` | A live snapshot, not saved |
 | `GET /api/history?from=<unix s>&to=<unix s>` | Saved readings, averaged to at most 1000 points per sensor |
 
 `/api/now`:
 ```json
 {"ts":1763020800,"sensors":[{"name":"soil","unit":"%","value":41.2},{"name":"temp","unit":"°C","value":null}]}
 ```
-`value: null` = that sensor failed. If Python can't be read at all: `503` with `{"error":"sensors unavailable"}`. Lists only the sensors from the latest `describe`.
+`"value": null` means that sensor failed. If Python can't be read at all, the reply is `503` with `{"error":"sensors unavailable"}`. Only sensors from the latest `describe` are listed.
 
-`/api/history` (ready for uPlot — one shared time list, values lined up with it, `null` for gaps):
+`/api/history`:
 ```json
 {"bucket":60,"t":[1763020800,1763020860],"sensors":[{"name":"soil","unit":"%","values":[41.2,null]}]}
 ```
-`from` and `to` are required; missing, not a number, or `to <= from` → `400`. `bucket = max(60, ceil((to - from) / 1000))` seconds. Includes every sensor that has data in the range, even old ones.
+`t` is one shared list of times and each sensor's `values` line up with it, with `null` for gaps. That's the shape uPlot takes. `from` and `to` are required, and a missing value, a non-number or `to <= from` gives `400`. The bucket size in seconds is `max(60, ceil((to - from) / 1000))`. Every sensor with data in the range is included, old ones too.
+
+### For the website developer
+
+You only need the two API calls above. Create the project once, from the project folder:
+```sh
+bun create vite web --template react-ts
+```
+Then add Tailwind v4 and coss ui following their install guides. Commit `bun.lock`.
+
+To work with live data, run the Rust program with fake sensors ([Run it on your PC](#run-it-on-your-pc)) and add this to `vite.config.ts`, so `/api` goes to it:
+```ts
+server: { proxy: { "/api": "http://localhost:8080" } },
+```
+Then start the website with `bun run dev`.
+
+A history reply goes straight into uPlot:
+```ts
+const data = [h.t, ...h.sensors.map((s) => s.values)];
+```
+
+`bun run build` writes the finished site to `web/dist/`, and the Rust program serves it. Keep it a plain client-side app. Server-rendered frameworks like Next.js need a JavaScript runtime on the Pi and gain us nothing. Put it on the Pi with `deploy/deploy.sh pi@<pi> web`.
+
+coss ui is young. Its components are copied into our code, so its updates can't break the site unless we pull them in.
 
 ## Database
 
-All SQL lives in `db/` as plain `.sql` files. Rust builds them into the program (`include_str!`), so there's still one file to copy to the Pi.
+All SQL lives in `db/` as plain `.sql` files. Rust builds them into the program with `include_str!`, so there's still only one file to copy to the Pi.
 
 ```
 db/
@@ -149,9 +173,9 @@ db/
 └── history.sql                # the bucket query
 ```
 
-**Migrations:** on startup, Rust runs every file in `db/migrations/` numbered above `PRAGMA user_version`, each in its own transaction, then sets `user_version`. Never edit a migration that has already run on the Pi; add a new one.
+On startup, Rust runs every file in `db/migrations/` whose number is above `PRAGMA user_version`, each in its own transaction, then sets `user_version`. Never edit a migration that has already run on the Pi. Add a new one.
 
-**Settings** are applied by the program every time it opens the database, not in a migration, because WAL can't be switched on inside a transaction:
+The program applies these settings each time it opens the database. They aren't in a migration because WAL can't be switched on inside a transaction.
 ```sql
 PRAGMA journal_mode = WAL;      -- lets reads and writes happen at the same time
 PRAGMA synchronous = NORMAL;    -- fewer slow disk syncs, still safe
@@ -174,9 +198,9 @@ CREATE TABLE readings (
 ) STRICT, WITHOUT ROWID;
 ```
 
-`sensors` rows are added or updated from `describe`. Old sensors and their readings are never deleted.
+Each `describe` adds or updates rows in `sensors`. Old sensors and their readings are never deleted.
 
-`history.sql`: averages the readings into time buckets.
+`history.sql` averages the readings into time buckets:
 ```sql
 -- in:  :from, :to, :bucket (unix seconds)
 -- out: name, unit, t, avg_value  (one row per sensor per bucket that has data, ordered by name, t)
@@ -187,34 +211,30 @@ GROUP BY r.sensor_id, t
 ORDER BY s.name, t;
 ```
 
-**Why it's small and fast:**
-- Rows are stored in time order, so no extra index is needed.
-- Each sensor is saved as a small number, not its full name.
-- Charts always get about 1000 points, so a year loads as fast as a day.
+The database stays small and fast for three reasons. Rows are stored in time order, so no extra index is needed. Each reading stores the sensor as a small number, not its name. And charts always get about 1000 points, so a year loads as fast as a day.
 
-**Size:** 5 sensors, one reading per minute ≈ **60–70 MB per year** (estimate). No cleanup of old data needed.
+Five sensors read once a minute come to roughly 60 to 70 MB a year, so old data never needs cleaning up.
 
 ### For the database developer
 
-You only need SQL and the `sqlite3` command line:
+You only need SQL and the `sqlite3` command line. You own `db/`.
 
-- **You own `db/`.** Change anything inside a query freely: indexes, rewrites, tuning.
-- **The first lines of each query file are an agreement with Rust:**
+- Change anything inside a query: indexes, rewrites, tuning.
+- The first lines of each query file are an agreement with Rust. Changing the inputs or outputs needs the Rust developer.
   ```sql
   -- in:  :from, :to, :bucket
   -- out: name, unit, t, avg_value
   ```
-  Changing the inputs or outputs needs the Rust developer.
-- **Changing tables:** add a new numbered file in `db/migrations/`. Never edit one that already ran on the Pi.
-- **Safety net:** `cargo test` runs your actual `.sql` files, so a breaking change is caught before it reaches the Pi.
-- **Try things on a copy:** `sqlite3 copy-of-garden.db`, never the live file.
+- To change tables, add a new numbered file in `db/migrations/`. Never edit one that already ran on the Pi.
+- `cd server && cargo test` runs your actual `.sql` files, so a broken query fails there before it reaches the Pi.
+- Experiment on a copy with `sqlite3 copy-of-garden.db`, never on the live file.
 
-**First jobs, in order:**
+First jobs, in order:
 1. Review `0001_init.sql`.
-2. Write a test-data script that fills a database with a year of fake readings (a recursive CTE).
-3. Check `history.sql` speed over that year of data (`EXPLAIN QUERY PLAN`, and time it on the Pi).
-4. Own backup and restore: test that a backup actually opens and has the data.
-5. Later: design the `events` table for pump control.
+2. Write a script that fills a test database with a year of fake readings, using a recursive CTE.
+3. Check how fast `history.sql` is over that year, with `EXPLAIN QUERY PLAN` and a timing on the Pi.
+4. Own backup and restore. Check that a backup opens and has the data.
+5. Later, design the `events` table for pump control.
 
 ## Folder layout
 
@@ -224,88 +244,76 @@ gardening-project-gear-club/
 │   ├── Cargo.toml
 │   └── src/main.rs         # website, schedule, database, runs Python
 ├── sensors/                # Python
-│   ├── pyproject.toml
+│   ├── pyproject.toml      # libraries; uv.lock pins their versions
+│   ├── .python-version     # Python 3.13
 │   └── sensors.py          # reads the sensors
-├── web/                    # React website
-│   ├── package.json
-│   └── src/
-├── db/                     # SQL: migrations + queries (built into the Rust program)
-├── deploy/                 # Pi setup (owned by the Rust developer)
-│   ├── garden.service      # auto-start config
-│   ├── garden-backup.*     # nightly backup timer
-│   ├── deploy.sh           # run on your PC: build, copy, install
-│   ├── install.sh          # runs on the Pi (deploy.sh calls it)
+├── web/                    # React website (not created yet)
+├── db/                     # SQL: migrations and queries, built into the Rust program
+├── deploy/                 # Pi install, owned by the Rust developer
+│   ├── deploy.sh           # run on your PC: build, copy, install, check
+│   ├── install.sh          # runs on the Pi, deploy.sh calls it
+│   ├── garden.service      # starts the app on boot
+│   ├── garden-backup.*     # nightly backup
 │   └── setup.md            # how to install on the Pi
 ├── docs/adr/               # why we made certain decisions
 ├── GLOSSARY.md             # what our words mean
-└── garden.db               # created when the app runs
+└── garden.db               # created when the app runs, not committed
 ```
 
-## Build and install
+The program finds `garden.db` and `web/dist/` relative to the folder it runs in. On the Pi that's `/opt/garden`, set by `WorkingDirectory` in `garden.service`. When stopped, it finishes open requests and then stops Python.
 
-| Part | On your PC | On the Pi |
-|---|---|---|
-| Rust | `cargo zigbuild --release --target aarch64-unknown-linux-musl` | copy the program |
-| Website | `bun install`, then `bun run build` | copy `web/dist/` |
-| Python | — | copy `sensors/`, run `uv sync` |
-
-**Building for the Pi** makes a static program (musl): it runs on any 64-bit Pi OS, with no system libraries to match. Zig is used only as the C compiler for SQLite. One-time setup on your PC:
-```
-rustup target add aarch64-unknown-linux-musl
-cargo install cargo-zigbuild
-winget install zig.zig
-```
-
-**Install or update the Pi:** `deploy/deploy.sh pi@<pi>` builds, copies, installs and checks, all in one go. Details in [deploy/setup.md](deploy/setup.md).
+## Running and installing
 
 ### Run it on your PC
 
 No Pi or sensors needed. From the project folder:
-```
+```sh
 GARDEN_SENSORS_CMD="python sensors/sensors.py --fake" cargo run --manifest-path server/Cargo.toml
 ```
-Open http://localhost:8080/api/now. It makes a `garden.db` in the project folder (not committed). Delete it to start fresh.
+Open http://localhost:8080/api/now. This creates `garden.db` in the project folder. Delete it to start fresh.
 
-**Website developer:** keep that running and start the website with `bun run dev`. Add this to `vite.config.ts`, so `/api` goes to the Rust program and you see live (fake) data:
-```ts
-server: { proxy: { "/api": "http://localhost:8080" } },
+### Install or update the Pi
+
+```sh
+deploy/deploy.sh pi@<pi>
 ```
+This builds everything, copies it to the Pi, installs it and checks that the app answers. Steps and options are in [deploy/setup.md](deploy/setup.md).
 
-The program finds `garden.db` and `web/dist/` relative to its working folder (set by `WorkingDirectory` in `garden.service`). On stop, it finishes open requests and stops Python.
+The Rust program is built on the PC as a static Linux ARM program (musl), so it runs on any 64-bit Pi OS without matching system libraries. Zig is only the C compiler for SQLite. To build for the Pi, you need these tools on your PC once:
+```sh
+rustup target add aarch64-unknown-linux-musl
+cargo install cargo-zigbuild
+winget install zig.zig
+```
+Building the website also needs bun, and the Pi installs Python through uv by itself.
 
 ## Protecting the SD card
 
-The app writes very little (one small save per minute). SD cards usually fail for other reasons:
+The app writes very little, one small save per minute. SD cards usually die for other reasons:
 
 | Do | Why |
 |---|---|
-| Use the official Pi 4 power supply | Low power is the top cause of SD card corruption |
-| Use a high-endurance SD card | Made for constant writing, similar price |
-| Back up the database every night to another device | So a dead card doesn't lose your data |
-| Optional: turn off swap, keep logs in memory, add `noatime` | The system writes far more than the app does |
+| Use the official Pi 4 power supply | Low power is the top cause of SD card corruption. |
+| Use a high-endurance SD card | Made for constant writing, at about the same price. |
+| Back up the database every night to another device | A dead card then doesn't lose the data. |
+| Optional: turn off swap, keep logs in memory, mount with `noatime` | The system writes far more than the app does. |
 
-**Backup:** a systemd timer runs nightly, in two steps:
-1. `sqlite3 garden.db ".backup backups/garden-YYYY-MM-DD.db"`: a safe copy on the Pi. The last 7 nights are kept; older copies are deleted so they don't fill the SD card. Don't copy `garden.db` directly, because with WAL the copy can be broken.
-2. Send that copy away from the garden. **Destination not decided yet.** Candidates:
-   - **A computer in an office** (e.g. the professor's), reached over Tailscale with `rsync`. That computer must be on at backup time, and the university may need to allow Tailscale on it.
-   - **Cloud storage** with `rclone`. Needs an account and its credentials stored on the Pi.
-
-   Either one, or both, is a single extra line in the timer.
+The backup runs every night at 03:00, or as soon as the Pi is back on if it was off then. It has two steps, both in `deploy/garden-backup.service`:
+1. `sqlite3 .backup` makes a safe copy in `/opt/garden/backups/` and keeps the last 7 nights. Never copy `garden.db` with `cp`. With WAL the copy can come out broken.
+2. A second command sends the copies away from the garden. We haven't chosen where yet, so both lines are commented out. Uncomment one or both:
+   - A computer in an office, such as the professor's, through `rsync` over Tailscale. It has to be on at 03:00, and the university may need to allow Tailscale on it.
+   - Cloud storage through `rclone`. This needs an account, with its login stored on the Pi.
 
 ## Future: pump control
 
-Not built yet. To add it: a `pump` command in `sensors.py`, a `POST /api/pump` route in Rust, and a new migration adding an `events` table to log it. Tailscale already keeps it private.
+Not built yet. Adding it takes a `pump` command in `sensors.py`, a `POST /api/pump` route in Rust, and a migration that adds an `events` table to log each run. Tailscale already keeps the controls private.
 
 ## Add later
 
 | Add | When |
 |---|---|
-| Auto-refresh of live values | You want values to update without clicking (one line of code) |
-| Rust sensor code | A sensor has good Rust support and you want to drop Python |
-| Cleanup of old data | The database grows past a few GB |
-| MQTT | You add wireless sensors elsewhere in the garden |
-| USB SSD | The SD card fails, or the app starts writing much more |
-
-**Avoid** server-rendered frameworks. They need Node or bun running on the Pi, for no benefit here. bun is only used on your PC, to build the website.
-
-**Note:** coss ui is still early-stage. Its components are copied into our code, so their updates can't break the site unless we choose to pull them in.
+| Live values that refresh on their own | Someone wants values to update without clicking. It's one line of code. |
+| Sensor code in Rust | A sensor has good Rust support and we want to drop Python. |
+| Cleanup of old data | The database grows past a few GB. |
+| MQTT | We add wireless sensors elsewhere in the garden. |
+| USB SSD instead of the SD card | The SD card fails, or the app starts writing much more. |

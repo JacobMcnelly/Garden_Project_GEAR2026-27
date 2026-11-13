@@ -14,6 +14,8 @@ In the commands below, replace `<pi>` with your Pi's name on Tailscale (or its a
    ```
 3. Check that `ssh pi@<pi>` works from your PC.
 
+On your PC you need the build tools listed in [Install or update the Pi](../ARCHITECTURE.md#install-or-update-the-pi), plus bun once the website exists. On Windows, run the commands below in Git Bash.
+
 ## Install or update
 
 From the project folder on your PC (Git Bash on Windows):
@@ -34,6 +36,8 @@ deploy/deploy.sh pi@<pi> units      # the files in deploy/ (service, backup time
 ```
 
 The website is then at `https://<pi>.<your-tailnet>.ts.net`.
+
+If your Pi login needs a password for `sudo`, the script asks for it. If the final check fails, read the log on the Pi with `journalctl -u garden -n 50`.
 
 ## Check it's running
 

@@ -1,18 +1,24 @@
 # Garden Monitor
 
-A Raspberry Pi 4 that reads garden sensors every minute, saves the readings, and shows them on a private website with history charts and a **Read now** button for live values.
-
-## Stack
-
-- **Server:** Rust (axum) + SQLite
-- **Sensors:** Python
-- **Website:** React + coss ui + uPlot
-- **Access:** Tailscale (private)
+A Raspberry Pi 4 in the garden reads the sensors every minute and saves the values. It also runs a private website with history charts and a **Read now** button for live values.
 
 ## Status
 
-Planning stage. No code yet; hardware is not chosen.
+| Part | State |
+|---|---|
+| Rust server | Done and tested. Runs on a PC with fake sensors. |
+| Database | First version of the tables and queries is done. |
+| Sensors | Starter script with fake values. Sensors not chosen yet. |
+| Website | Not started. |
+| Pi install | Scripts written, not yet tried on the Pi. |
 
-## Docs
+## Where to start
 
-- [ARCHITECTURE.md](ARCHITECTURE.md): how everything fits together, with diagrams.
+Read the overview at the top of [ARCHITECTURE.md](ARCHITECTURE.md), then the section for your part:
+
+- Sensors (Python): [For the sensors developer](ARCHITECTURE.md#for-the-sensors-developer)
+- Website (React): [For the website developer](ARCHITECTURE.md#for-the-website-developer)
+- Database (SQL): [For the database developer](ARCHITECTURE.md#for-the-database-developer)
+- Installing on the Pi: [deploy/setup.md](deploy/setup.md)
+
+[GLOSSARY.md](GLOSSARY.md) defines the words we use. [docs/adr/](docs/adr/) explains decisions that might look odd.
