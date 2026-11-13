@@ -9,7 +9,7 @@ In the commands below, replace `<pi>` with your Pi's name on Tailscale (or its a
 From the project folder:
 
 ```sh
-cd server && cargo zigbuild --release --target aarch64-unknown-linux-gnu && cd ..
+cd server && cargo zigbuild --release --target aarch64-unknown-linux-musl && cd ..
 cd web && npm run build && cd ..
 ```
 
@@ -17,7 +17,7 @@ Then copy everything to the Pi (into a folder called `upload` in your home folde
 
 ```sh
 ssh pi@<pi> mkdir -p upload/web
-scp server/target/aarch64-unknown-linux-gnu/release/garden pi@<pi>:upload/
+scp server/target/aarch64-unknown-linux-musl/release/garden pi@<pi>:upload/
 scp -r web/dist pi@<pi>:upload/web/
 scp -r sensors deploy pi@<pi>:upload/
 ```

@@ -242,9 +242,16 @@ gardening-project-gear-club/
 
 | Part | On your PC | On the Pi |
 |---|---|---|
-| Rust | `cargo zigbuild --release --target aarch64-unknown-linux-gnu` | copy the program |
+| Rust | `cargo zigbuild --release --target aarch64-unknown-linux-musl` | copy the program |
 | Website | `npm run build` | copy `web/dist/` |
 | Python | — | copy `sensors/`, run `uv sync` |
+
+**Building for the Pi** makes a static program (musl): it runs on any 64-bit Pi OS, with no system libraries to match. Zig is used only as the C compiler for SQLite. One-time setup on your PC:
+```
+rustup target add aarch64-unknown-linux-musl
+cargo install cargo-zigbuild
+winget install zig.zig
+```
 
 **On your PC without sensors:** set `GARDEN_SENSORS_CMD` to run `sensors.py --fake`.
 
