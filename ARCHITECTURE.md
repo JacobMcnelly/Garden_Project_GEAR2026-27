@@ -36,6 +36,7 @@ The Rust ↔ Python messages, the API responses, and the `-- in:` / `-- out:` li
 | Database | SQLite (`rusqlite`) | A single file on the Pi. No separate database server to run. |
 | Sensors | Python 3.14 + `uv` | Works with the most sensors. |
 | Website | Vite + React + TypeScript + Tailwind v4 + coss ui | Good-looking ready-made components. |
+| Website tooling | bun | Installs packages and runs the build, faster than npm. Only needed on your PC. |
 | Charts | uPlot | The fastest chart library for time data (~50 KB). |
 | Remote access | Tailscale (`tailscale serve`) | Secure access from anywhere with HTTPS, no router setup and no login code to write. |
 | Auto-start | systemd | Built into the Pi. Starts the app on boot and restarts it if it crashes. |
@@ -243,7 +244,7 @@ gardening-project-gear-club/
 | Part | On your PC | On the Pi |
 |---|---|---|
 | Rust | `cargo zigbuild --release --target aarch64-unknown-linux-musl` | copy the program |
-| Website | `npm run build` | copy `web/dist/` |
+| Website | `bun install`, then `bun run build` | copy `web/dist/` |
 | Python | — | copy `sensors/`, run `uv sync` |
 
 **Building for the Pi** makes a static program (musl): it runs on any 64-bit Pi OS, with no system libraries to match. Zig is used only as the C compiler for SQLite. One-time setup on your PC:
@@ -292,6 +293,6 @@ Not built yet. To add it: a `pump` command in `sensors.py`, a `POST /api/pump` r
 | MQTT | You add wireless sensors elsewhere in the garden |
 | USB SSD | The SD card fails, or the app starts writing much more |
 
-**Avoid** server-rendered frameworks. They need Node running on the Pi, for no benefit here.
+**Avoid** server-rendered frameworks. They need Node or bun running on the Pi, for no benefit here. bun is only used on your PC, to build the website.
 
 **Note:** coss ui is still early-stage. Its components are copied into our code, so their updates can't break the site unless we choose to pull them in.

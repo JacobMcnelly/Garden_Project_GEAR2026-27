@@ -10,7 +10,7 @@ From the project folder:
 
 ```sh
 cd server && cargo zigbuild --release --target aarch64-unknown-linux-musl && cd ..
-cd web && npm run build && cd ..
+cd web && bun install && bun run build && cd ..
 ```
 
 Then copy everything to the Pi (into a folder called `upload` in your home folder):
