@@ -218,6 +218,58 @@ fn upsert_sensors(conn: &Connection, units: &BTreeMap<String, String>) -> rusqli
     Ok(())
 }
 
+/// Saves one snapshot in a single transaction: all of it or none.
+fn save_snapshot(
+    conn: &mut Connection,
+    ts: i64,
+    values: &BTreeMap<String, f64>,
+) -> rusqlite::Result<()> {
+    let tx = conn.transaction()?;
+    {
+        let mut stmt = tx.prepare_cached(include_str!("../../db/insert_reading.sql"))?;
+        for (name, value) in values {
+            stmt.execute(named_params! {":ts": ts, ":name": name, ":value": value})?;
+        }
+    }
+    tx.commit()
+}
+
+/// Time until the next wall-clock minute; a full minute at :00 exactly, so one minute never gets two snapshots.
+fn until_next_minute(since_epoch: Duration) -> Duration {
+    Duration::from_millis(60_000 - (since_epoch.as_millis() % 60_000) as u64)
+}
+
+/// Saves a snapshot at the start of every minute. A late or missed minute is skipped, never caught up.
+async fn record_every_minute(app: App) {
+    loop {
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default();
+        tokio::time::sleep(until_next_minute(now)).await;
+        // Held through the save, so shutdown (which takes this lock) waits for it.
+        let mut sensors = app.sensors.lock().await;
+        let Some((ts, values)) = sensors.snapshot(&app.db).await else {
+            eprintln!("recorder: no snapshot this minute");
+            continue;
+        };
+        let db = app.db.clone();
+        let res = tokio::task::spawn_blocking(move || {
+            save_snapshot(
+                &mut db.lock().unwrap_or_else(PoisonError::into_inner),
+                ts,
+                &values,
+            )
+        })
+        .await;
+        let err = match res {
+            Ok(Ok(())) => continue,
+            Ok(Err(e)) => e.to_string(),
+            Err(e) => e.to_string(),
+        };
+        eprintln!("recorder: save failed: {err}");
+    }
+}
+
 #[derive(Default)]
 struct Sensors {
     python: Option<Python>,
@@ -304,14 +356,17 @@ async fn main() {
     let mut conn = open("garden.db").expect("open garden.db");
     migrate(&mut conn).expect("run migrations");
 
+    let state = App {
+        db: Arc::new(Mutex::new(conn)),
+        sensors: Default::default(),
+    };
+    tokio::spawn(record_every_minute(state.clone()));
+
     let app = axum::Router::new()
         .route("/api/history", axum::routing::get(get_history))
         .route("/api/now", axum::routing::get(get_now))
         .fallback_service(ServeDir::new("web/dist"))
-        .with_state(App {
-            db: Arc::new(Mutex::new(conn)),
-            sensors: Default::default(),
-        });
+        .with_state(state);
     // Localhost only: tailscale serve is the sole access control (ADR 0002).
     let listener = tokio::net::TcpListener::bind("127.0.0.1:8080")
         .await
@@ -516,6 +571,66 @@ mod tests {
         assert_eq!(unit, "%");
         upsert_sensors(&conn, &BTreeMap::from([("soil".into(), "VWC %".into())])).unwrap();
         assert_eq!(soil(&conn), (id, "VWC %".into()));
+    }
+
+    fn saved(conn: &Connection) -> Vec<(i64, i64, f64)> {
+        let mut stmt = conn
+            .prepare("SELECT ts, sensor_id, value FROM readings ORDER BY ts, sensor_id")
+            .unwrap();
+        stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))
+            .unwrap()
+            .map(Result::unwrap)
+            .collect()
+    }
+
+    #[test]
+    fn save_snapshot_inserts_rows() {
+        let mut conn = db();
+        save_snapshot(
+            &mut conn,
+            60,
+            &BTreeMap::from([("soil".into(), 41.2), ("temp".into(), 18.5)]),
+        )
+        .unwrap();
+        assert_eq!(saved(&conn), vec![(60, 1, 41.2), (60, 2, 18.5)]);
+    }
+
+    #[test]
+    fn save_snapshot_ignores_duplicate_ts() {
+        let mut conn = db();
+        save_snapshot(&mut conn, 60, &BTreeMap::from([("soil".into(), 1.0)])).unwrap();
+        save_snapshot(&mut conn, 60, &BTreeMap::from([("soil".into(), 2.0)])).unwrap();
+        assert_eq!(saved(&conn), vec![(60, 1, 1.0)]);
+    }
+
+    #[test]
+    fn save_snapshot_ignores_unknown_name() {
+        let mut conn = db();
+        save_snapshot(&mut conn, 60, &BTreeMap::from([("wind".into(), 3.0)])).unwrap();
+        assert!(saved(&conn).is_empty());
+    }
+
+    #[test]
+    fn save_snapshot_is_all_or_nothing() {
+        let mut conn = db();
+        conn.execute_batch(
+            "CREATE TEMP TRIGGER fail BEFORE INSERT ON readings WHEN NEW.value = 999
+             BEGIN SELECT RAISE(ABORT, 'boom'); END;",
+        )
+        .unwrap();
+        // soil is saved first, then temp fails: soil must be rolled back too.
+        let values = BTreeMap::from([("soil".into(), 1.0), ("temp".into(), 999.0)]);
+        assert!(save_snapshot(&mut conn, 60, &values).is_err());
+        assert!(saved(&conn).is_empty());
+    }
+
+    #[test]
+    fn next_minute_delay() {
+        let ms = Duration::from_millis;
+        assert_eq!(until_next_minute(ms(1_763_020_800_000)), ms(60_000)); // exactly :00
+        assert_eq!(until_next_minute(ms(1_763_020_800_001)), ms(59_999));
+        assert_eq!(until_next_minute(ms(1_763_020_859_500)), ms(500));
+        assert_eq!(until_next_minute(ms(1_763_020_830_000)), ms(30_000));
     }
 
     #[test]
