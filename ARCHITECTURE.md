@@ -178,10 +178,12 @@ CREATE TABLE readings (
 `history.sql`: averages the readings into time buckets.
 ```sql
 -- in:  :from, :to, :bucket (unix seconds)
--- out: sensor_id, t, avg_value
-SELECT sensor_id, ts / :bucket * :bucket AS t, AVG(value) AS avg_value
-FROM readings WHERE ts BETWEEN :from AND :to
-GROUP BY sensor_id, t;
+-- out: name, unit, t, avg_value  (one row per sensor per bucket that has data, ordered by name, t)
+SELECT s.name, s.unit, r.ts / :bucket * :bucket AS t, AVG(r.value) AS avg_value
+FROM readings r JOIN sensors s ON s.id = r.sensor_id
+WHERE r.ts BETWEEN :from AND :to
+GROUP BY r.sensor_id, t
+ORDER BY s.name, t;
 ```
 
 **Why it's small and fast:**
@@ -199,7 +201,7 @@ You only need SQL and the `sqlite3` command line:
 - **The first lines of each query file are an agreement with Rust:**
   ```sql
   -- in:  :from, :to, :bucket
-  -- out: sensor_id, t, avg_value
+  -- out: name, unit, t, avg_value
   ```
   Changing the inputs or outputs needs the Rust developer.
 - **Changing tables:** add a new numbered file in `db/migrations/`. Never edit one that already ran on the Pi.
