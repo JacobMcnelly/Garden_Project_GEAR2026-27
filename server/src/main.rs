@@ -366,7 +366,7 @@ async fn main() {
         .route("/api/history", axum::routing::get(get_history))
         .route("/api/now", axum::routing::get(get_now))
         .fallback_service(ServeDir::new("web/dist"))
-        .with_state(state);
+        .with_state(state.clone());
     // Localhost only: tailscale serve is the sole access control (ADR 0002).
     let listener = tokio::net::TcpListener::bind("127.0.0.1:8080")
         .await
@@ -375,6 +375,12 @@ async fn main() {
         .with_graceful_shutdown(shutdown())
         .await
         .expect("server error");
+
+    eprintln!("shutting down");
+    // Waits for a snapshot or save in progress; kept until exit so no new snapshot starts Python again.
+    let mut sensors = state.sensors.lock().await;
+    sensors.python = None; // kill_on_drop stops it
+    eprintln!("stopped");
 }
 
 #[cfg(test)]
