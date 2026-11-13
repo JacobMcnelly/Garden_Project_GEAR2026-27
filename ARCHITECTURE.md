@@ -233,6 +233,8 @@ gardening-project-gear-club/
 ├── deploy/                 # Pi setup (owned by the Rust developer)
 │   ├── garden.service      # auto-start config
 │   ├── garden-backup.*     # nightly backup timer
+│   ├── deploy.sh           # run on your PC: build, copy, install
+│   ├── install.sh          # runs on the Pi (deploy.sh calls it)
 │   └── setup.md            # how to install on the Pi
 ├── docs/adr/               # why we made certain decisions
 ├── GLOSSARY.md             # what our words mean
@@ -254,9 +256,20 @@ cargo install cargo-zigbuild
 winget install zig.zig
 ```
 
-**On your PC without sensors:** set `GARDEN_SENSORS_CMD` to run `sensors.py --fake`.
+**Install or update the Pi:** `deploy/deploy.sh pi@<pi>` builds, copies, installs and checks, all in one go. Details in [deploy/setup.md](deploy/setup.md).
 
-**Pi setup** (once): step by step in [deploy/setup.md](deploy/setup.md).
+### Run it on your PC
+
+No Pi or sensors needed. From the project folder:
+```
+GARDEN_SENSORS_CMD="python sensors/sensors.py --fake" cargo run --manifest-path server/Cargo.toml
+```
+Open http://localhost:8080/api/now. It makes a `garden.db` in the project folder (not committed). Delete it to start fresh.
+
+**Website developer:** keep that running and start the website with `bun run dev`. Add this to `vite.config.ts`, so `/api` goes to the Rust program and you see live (fake) data:
+```ts
+server: { proxy: { "/api": "http://localhost:8080" } },
+```
 
 The program finds `garden.db` and `web/dist/` relative to its working folder (set by `WorkingDirectory` in `garden.service`). On stop, it finishes open requests and stops Python.
 
