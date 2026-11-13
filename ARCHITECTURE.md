@@ -142,7 +142,7 @@ All SQL lives in `db/` as plain `.sql` files. Rust builds them into the program 
 
 ```
 db/
-├── migrations/0001_init.sql   # pragmas + tables
+├── migrations/0001_init.sql   # tables
 ├── insert_reading.sql
 ├── upsert_sensor.sql
 └── history.sql                # the bucket query
@@ -150,11 +150,15 @@ db/
 
 **Migrations:** on startup, Rust runs every file in `db/migrations/` numbered above `PRAGMA user_version`, each in its own transaction, then sets `user_version`. Never edit a migration that has already run on the Pi; add a new one.
 
-`0001_init.sql`:
+**Settings** are applied by the program every time it opens the database, not in a migration, because WAL can't be switched on inside a transaction:
 ```sql
 PRAGMA journal_mode = WAL;      -- lets reads and writes happen at the same time
 PRAGMA synchronous = NORMAL;    -- fewer slow disk syncs, still safe
+PRAGMA foreign_keys = ON;       -- SQLite leaves this off unless asked
+```
 
+`0001_init.sql`:
+```sql
 CREATE TABLE sensors (
   id   INTEGER PRIMARY KEY,
   name TEXT NOT NULL UNIQUE,
