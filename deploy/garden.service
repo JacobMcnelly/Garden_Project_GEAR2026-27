@@ -1,0 +1,17 @@
+[Unit]
+Description=Garden monitor
+# Start only once the clock is right, or readings get wrong timestamps (docs/adr/0001-wait-for-clock-sync.md).
+Wants=time-sync.target
+After=time-sync.target network-online.target
+
+[Service]
+User=garden
+Group=garden
+WorkingDirectory=/opt/garden
+ExecStart=/opt/garden/garden
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=yes
+
+[Install]
+WantedBy=multi-user.target

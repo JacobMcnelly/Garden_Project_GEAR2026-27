@@ -1,0 +1,18 @@
+[Unit]
+Description=Back up the garden database
+# So the date in the file name is right after a power cut.
+After=time-sync.target
+
+[Service]
+Type=oneshot
+User=garden
+Group=garden
+ExecStart=/bin/mkdir -p /opt/garden/backups
+# .backup, not cp: copying a WAL database directly can give a broken copy.
+ExecStart=/bin/sh -c 'sqlite3 /opt/garden/garden.db ".backup /opt/garden/backups/garden-$$(date +%%F).db"'
+# Keep the last 7 nights on the SD card; older copies would slowly fill it.
+ExecStart=/usr/bin/find /opt/garden/backups -name garden-*.db -mtime +6 -delete
+
+# Send the copies away from the garden. The club hasn't chosen where yet: uncomment one (or both) and fill in.
+#ExecStart=/usr/bin/rsync -a /opt/garden/backups/ USER@OFFICE-PC:garden-backups/
+#ExecStart=/usr/bin/rclone copy /opt/garden/backups REMOTE:garden-backups

@@ -231,7 +231,8 @@ gardening-project-gear-club/
 ├── db/                     # SQL: migrations + queries (built into the Rust program)
 ├── deploy/                 # Pi setup (owned by the Rust developer)
 │   ├── garden.service      # auto-start config
-│   └── garden-backup.*     # nightly backup timer
+│   ├── garden-backup.*     # nightly backup timer
+│   └── setup.md            # how to install on the Pi
 ├── docs/adr/               # why we made certain decisions
 ├── GLOSSARY.md             # what our words mean
 └── garden.db               # created when the app runs
@@ -247,12 +248,7 @@ gardening-project-gear-club/
 
 **On your PC without sensors:** set `GARDEN_SENSORS_CMD` to run `sensors.py --fake`.
 
-**Pi setup** (once):
-1. Use 64-bit Raspberry Pi OS.
-2. Add the service user to the `gpio` and `i2c` groups, so sensor libraries work under systemd, not just by hand.
-3. Enable `systemd-time-wait-sync`, then enable `garden.service` (it waits for `time-sync.target`).
-4. Run `tailscale serve` pointing at `127.0.0.1:8080`.
-5. Enable the backup timer.
+**Pi setup** (once): step by step in [deploy/setup.md](deploy/setup.md).
 
 The program finds `garden.db` and `web/dist/` relative to its working folder (set by `WorkingDirectory` in `garden.service`). On stop, it finishes open requests and stops Python.
 
@@ -268,7 +264,7 @@ The app writes very little (one small save per minute). SD cards usually fail fo
 | Optional: turn off swap, keep logs in memory, add `noatime` | The system writes far more than the app does |
 
 **Backup:** a systemd timer runs nightly, in two steps:
-1. `sqlite3 garden.db ".backup backups/garden-YYYY-MM-DD.db"`: a safe copy on the Pi. Don't copy `garden.db` directly, because with WAL the copy can be broken.
+1. `sqlite3 garden.db ".backup backups/garden-YYYY-MM-DD.db"`: a safe copy on the Pi. The last 7 nights are kept; older copies are deleted so they don't fill the SD card. Don't copy `garden.db` directly, because with WAL the copy can be broken.
 2. Send that copy away from the garden. **Destination not decided yet.** Candidates:
    - **A computer in an office** (e.g. the professor's), reached over Tailscale with `rsync`. That computer must be on at backup time, and the university may need to allow Tailscale on it.
    - **Cloud storage** with `rclone`. Needs an account and its credentials stored on the Pi.

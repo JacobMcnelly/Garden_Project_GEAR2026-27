@@ -1,0 +1,10 @@
+[Unit]
+Description=Back up the garden database every night
+
+[Timer]
+OnCalendar=*-*-* 03:00:00
+# If the Pi was off at 03:00, back up as soon as it's on again.
+Persistent=true
+
+[Install]
+WantedBy=timers.target
