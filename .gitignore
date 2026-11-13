@@ -1,2 +1,4 @@
 server/target/
 garden.db*
+.venv/
+__pycache__/

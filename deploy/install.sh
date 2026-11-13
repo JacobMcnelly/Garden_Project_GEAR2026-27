@@ -26,11 +26,7 @@ for part in "$@"; do
       chown -R garden:garden $APP/web ;; # served straight from disk, no restart needed
     sensors)
       cp -r "$UP/sensors" $APP/ && chown -R garden:garden $APP/sensors
-      if [ -f $APP/sensors/pyproject.toml ]; then
-        (cd $APP/sensors && sudo -u garden -H uv sync)
-      else
-        echo "warning: sensors/pyproject.toml is missing, so the Python packages were not installed"
-      fi
+      (cd $APP/sensors && sudo -u garden -H uv sync)
       restart=yes ;;
     units)
       cp "$UP"/deploy/garden.service "$UP"/deploy/garden-backup.service "$UP"/deploy/garden-backup.timer /etc/systemd/system/
