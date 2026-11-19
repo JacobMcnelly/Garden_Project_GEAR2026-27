@@ -1,6 +1,6 @@
 # Garden Monitor architecture
 
-A Raspberry Pi 4 reads the garden sensors every minute, saves the readings, and runs a website with history charts and a **Read now** button for live values.
+A Raspberry Pi 4 reads the garden sensors every minute, saves the readings, and runs a website. The homepage shows each sensor's latest value on a card, and each card opens a full history chart.
 
 We keep it simple on purpose. One program runs on the Pi, one Python file talks to the hardware, and the website is plain files. Anything extra waits until we need it, see [Add later](#add-later).
 
@@ -66,7 +66,7 @@ sequenceDiagram
 ```
 
 1. **Every minute**, on the minute, Rust asks Python for a snapshot and saves it. If a minute is missed, Rust skips it and doesn't catch up.
-2. **Read now** asks Python for a live snapshot and sends it to the browser. Nothing is saved.
+2. **Read now**, an optional button on the website, asks Python for a live snapshot and sends it to the browser. Nothing is saved.
 3. **Charts** come from the saved data in SQLite. They never ask Python.
 
 Rust stamps the whole snapshot with one time, in unix seconds UTC, at the moment it sends `read`. The Pi has no clock battery, so after a power cut the app waits until the clock has synced before it starts ([ADR 0001](docs/adr/0001-wait-for-clock-sync.md)).
@@ -174,6 +174,28 @@ A history reply goes straight into uPlot:
 const h = await (await fetch(`/api/history?from=${from}&to=${to}`)).json();
 const data = [h.t, ...h.sensors.map((s) => s.values)];
 ```
+
+#### Suggested pages
+
+**Homepage: one card per sensor.** A card shows the sensor's name, its latest value with the unit, a small line of the last 12 hours, and the time of the reading ("updated 14:32"). If that time is more than about 3 minutes old, grey the card out, so a broken sensor or a stopped Pi is obvious. Clicking a card opens its detail page.
+
+Fill the cards from one call, and repeat it every minute, a few seconds after the minute:
+```ts
+const now = Math.floor(Date.now() / 1000);
+const h = await (await fetch(`/api/history?from=${now - 12 * 3600}&to=${now}`)).json();
+// for each sensor: the latest value is the last value in h.sensors[i].values that isn't null,
+// and its time is the matching entry in h.t
+```
+For any range up to about 16 hours, `/api/history` returns one point per minute, so that last value is the real latest reading. Don't use `/api/now` for the cards. It reads the sensors live, so every open browser would read them again each minute.
+
+**Detail page: like a stock page on Google Finance.**
+- The latest value in large text at the top, and the change over the chosen range as a plain difference, like "+2.1 °C". Not a percent: a percent of soil moisture % is confusing.
+- Range buttons: 1D, 1W, 1M, 6M, 1Y. Each button only changes `from`. The reply never has more than 1000 points, so a year loads as fast as a day.
+- A uPlot line chart with the value shown on hover.
+- Optional: a table of the same points under the chart, newest first.
+- Optional: a small **Read now** button that calls `/api/now` to read the sensor at this moment. Show the result, it isn't saved.
+
+A "MAX" range button would need the time of the very first reading, which the API doesn't give yet. Ask the Rust developer when there's more than a year of data.
 
 When it's ready, put it on the Pi with `deploy/deploy.sh pi@<pi> web`.
 

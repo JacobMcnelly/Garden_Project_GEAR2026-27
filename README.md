@@ -1,6 +1,6 @@
 # Garden Monitor
 
-A Raspberry Pi 4 in the garden reads the sensors every minute and saves the values. It also runs a private website with history charts and a **Read now** button for live values.
+A Raspberry Pi 4 in the garden reads the sensors every minute and saves the values. It also runs a private website: a card per sensor with its latest value, and a history chart for each one.
 
 ## Status
 
