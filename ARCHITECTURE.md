@@ -15,7 +15,7 @@ flowchart LR
         R <-->|stdin / stdout| P["sensors.py<br/>started by Rust"]
     end
     P <--> S[Sensors]
-    R <-->|tailscale serve| B["Browser<br/>React website"]
+    R <-->|tailscale serve| B["Browser<br/>website"]
     P -.->|future| PU[Pump]
 ```
 
@@ -23,7 +23,7 @@ flowchart LR
 |---|---|---|
 | Rust program, `server/` | The main program. Serves the website and the API, reads the sensors every minute, saves the readings, and keeps the Python script running. | Rust developer |
 | `sensors/sensors.py` | Talks to the sensors and nothing else. It's Python because most sensor libraries are written for Python. | Sensors developer |
-| Website, `web/` | A React app. It's built on a PC and copied to the Pi as plain files, then runs in the browser and asks the Pi for data. | Website developer |
+| Website, `web/` | A website built on a PC and copied to the Pi as plain files, then runs in the browser and asks the Pi for data. | Website developer |
 | `db/*.sql` | The tables and queries. Rust runs these files as they are. | Database developer |
 | `deploy/` | Scripts and settings that install the app on the Pi. | Rust developer |
 
@@ -36,9 +36,10 @@ Three things are agreements between people, so change them only together: the me
 | Server | Rust with `axum`, `tokio`, `tower-http` | Uses about 5 to 10 MB of memory and ships as one file. |
 | Database | SQLite through `rusqlite` | A single file on the Pi. No database server to run. |
 | Sensors | Python 3.13 with `uv` | Most sensor libraries are written for Python. 3.13 is the Python that comes with current Raspberry Pi OS. |
-| Website | Vite, React, TypeScript, Tailwind v4, coss ui | coss ui gives us ready-made components that look good. |
+| Website | Not decided yet. See the [suggestion](#suggested-website-stack). | |
 | Website tooling | bun | Installs packages and builds the website. Only needed on a PC, never on the Pi. |
 | Charts | uPlot | About 50 KB and fast with long time series. |
+| Icons | Lucide | Free, consistent icons. Only the icons you use end up in the site. |
 | Remote access | Tailscale with `tailscale serve` | Private HTTPS access from anywhere. No router setup and no login code to write. |
 | Auto-start | systemd | Built into the Pi. Starts the app on boot and restarts it if it crashes. |
 
@@ -140,26 +141,41 @@ The server listens only on `127.0.0.1:8080`, and people reach it through `tailsc
 
 ### For the website developer
 
-You only need the two API calls above. Create the project once, from the project folder:
+The website only needs the two API calls above. Charts use uPlot and icons use Lucide. Everything else is your choice, with one rule: `bun run build` must produce plain files in `web/dist/`, which the Rust program serves. So no server-rendered frameworks like Next.js. They need a JavaScript runtime on the Pi and gain us nothing.
+
+#### Suggested website stack
+
+If you haven't built a website like this before, this is a safe start. Every tool here is popular, so tutorials and answers are easy to find.
+
+| Tool | Why |
+|---|---|
+| Vite | Makes the project, runs it while you work, and builds the final files. |
+| React | The most used way to build pages from components. Lucide and uPlot both work with it. |
+| TypeScript | Catches typos and wrong field names before you open the browser. Plain JavaScript also works if TypeScript feels like too much at first. |
+| Tailwind CSS | Style things right in the markup, without writing separate CSS files. |
+
+Create the project once, from the project folder:
 ```sh
 bun create vite web --template react-ts
+cd web && bun add uplot lucide-react
 ```
-Then add Tailwind v4 and coss ui following their install guides. Commit `bun.lock`.
+Use `--template react` for plain JavaScript. Commit `bun.lock` so everyone gets the same package versions.
 
-To work with live data, run the Rust program with fake sensors ([Run it on your PC](#run-it-on-your-pc)) and add this to `vite.config.ts`, so `/api` goes to it:
+#### Working with live data
+
+Run the Rust program with fake sensors ([Run it on your PC](#run-it-on-your-pc)), then add this to `vite.config.ts` so `/api` goes to it:
 ```ts
 server: { proxy: { "/api": "http://localhost:8080" } },
 ```
-Then start the website with `bun run dev`.
+Start the website with `bun run dev` and open the address it prints.
 
 A history reply goes straight into uPlot:
 ```ts
+const h = await (await fetch(`/api/history?from=${from}&to=${to}`)).json();
 const data = [h.t, ...h.sensors.map((s) => s.values)];
 ```
 
-`bun run build` writes the finished site to `web/dist/`, and the Rust program serves it. Keep it a plain client-side app. Server-rendered frameworks like Next.js need a JavaScript runtime on the Pi and gain us nothing. Put it on the Pi with `deploy/deploy.sh pi@<pi> web`.
-
-coss ui is young. Its components are copied into our code, so its updates can't break the site unless we pull them in.
+When it's ready, put it on the Pi with `deploy/deploy.sh pi@<pi> web`.
 
 ## Database
 
@@ -247,7 +263,7 @@ gardening-project-gear-club/
 │   ├── pyproject.toml      # libraries; uv.lock pins their versions
 │   ├── .python-version     # Python 3.13
 │   └── sensors.py          # reads the sensors
-├── web/                    # React website (not created yet)
+├── web/                    # website (not created yet)
 ├── db/                     # SQL: migrations and queries, built into the Rust program
 ├── deploy/                 # Pi install, owned by the Rust developer
 │   ├── deploy.sh           # run on your PC: build, copy, install, check
