@@ -1,5 +1,7 @@
 # Garden Monitor
 
+Code from the SJU GEAR Club 2026-2027 team, for the SJU Gardening Club's garden sensor project.
+
 A Raspberry Pi 4 in the garden reads the sensors every minute and saves the values. It also runs a private website: a card per sensor with its latest value, and a history chart for each one.
 
 ## Status
