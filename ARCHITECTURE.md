@@ -346,7 +346,7 @@ Rust checks every input. Names and `plant` can't be empty, and spaces around the
 ```sh
 GARDEN_ADMINS=sam@example.com,alex@example.com
 ```
-Use each admin's Tailscale login, as shown in the Tailscale admin console. After changing it, run `sudo systemctl restart garden`. Each admin installs the Tailscale app on their phone and signs in once.
+Steps are in [Add the gardening admins](deploy/setup.md#add-the-gardening-admins).
 
 **Website.** A Plants page lists the beds and what grows in each, readable on a phone in the garden. Admins also see add, edit and remove buttons with short forms. Later, a sensor card can name its bed, like "Soil · Bed 3 · Tomato".
 
@@ -374,6 +374,8 @@ gardening-project-gear-club/
 │   ├── garden-backup.*     # nightly backup
 │   └── setup.md            # how to install on the Pi
 ├── docs/adr/               # why we made certain decisions
+├── README.md               # start here
+├── ARCHITECTURE.md         # this file
 ├── GLOSSARY.md             # what our words mean
 └── garden.db               # created when the app runs, not committed
 ```
@@ -430,7 +432,6 @@ Not built yet. Adding it takes a `pump` command in `sensors.py`, a `POST /api/pu
 
 | Add | When |
 |---|---|
-| Live values that refresh on their own | Someone wants values to update without clicking. It's one line of code. |
 | Sensor code in Rust | A sensor has good Rust support and we want to drop Python. |
 | Cleanup of old data | The database grows past a few GB. |
 | MQTT | We add wireless sensors elsewhere in the garden. |

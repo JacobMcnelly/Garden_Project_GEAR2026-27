@@ -18,7 +18,7 @@ On your PC you need the build tools listed in [Install or update the Pi](../ARCH
 
 ## Install or update
 
-From the project folder on your PC (Git Bash on Windows):
+From the project folder on your PC:
 
 ```sh
 deploy/deploy.sh pi@<pi>
@@ -39,6 +39,17 @@ The website is then at `https://<pi>.<your-tailnet>.ts.net`.
 
 If your Pi login needs a password for `sudo`, the script asks for it. If the final check fails, read the log on the Pi with `journalctl -u garden -n 50`.
 
+## Add the gardening admins
+
+Admins can add and edit beds and plantings ([ADR 0003](../docs/adr/0003-admins-by-tailscale-identity.md)). Without this step everyone is a viewer. The list stays on the Pi only, because the repo is public. On the Pi:
+
+```sh
+echo 'GARDEN_ADMINS=sam@example.com,alex@example.com' | sudo tee /etc/garden.env
+sudo systemctl restart garden
+```
+
+Use each admin's Tailscale login as shown in the Tailscale admin console. Each admin installs the Tailscale app on their phone and signs in once. To check, an admin opens `https://<pi>.<your-tailnet>.ts.net/api/me` and should see `"admin":true`.
+
 ## Check it's running
 
 On the Pi (`ssh pi@<pi>`):
@@ -49,3 +60,5 @@ journalctl -u garden -f            # live log; Ctrl-C to stop watching
 systemctl list-timers garden-backup
 sudo systemctl start garden-backup && ls /opt/garden/backups   # test a backup now
 ```
+
+The log's first lines include `admins: N`, the number of admins it loaded.
