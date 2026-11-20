@@ -1,6 +1,6 @@
 # Garden Monitor architecture
 
-A Raspberry Pi 4 reads the garden sensors every minute, saves the readings, and runs a website. The homepage shows each sensor's latest value on a card, and each card opens a full history chart.
+A Raspberry Pi 4 reads the garden sensors every minute, saves the readings, and runs a website. The homepage shows each sensor's latest value on a card, and each card opens a full history chart. Gardening admins also keep a list of the beds and what grows in each.
 
 We keep it simple on purpose. One program runs on the Pi, one Python file talks to the hardware, and the website is plain files. Anything extra waits until we need it, see [Add later](#add-later).
 
@@ -40,7 +40,7 @@ Three things are agreements between people, so change them only together: the me
 | Website tooling | bun | Installs packages and builds the website. Only needed on a PC, never on the Pi. |
 | Charts | uPlot | About 50 KB and fast with long time series. |
 | Icons | Lucide | Free, consistent icons. Only the icons you use end up in the site. |
-| Remote access | Tailscale with `tailscale serve` | Private HTTPS access from anywhere. No router setup and no login code to write. |
+| Remote access | Tailscale with `tailscale serve` | Private HTTPS access from anywhere. No router setup and no login code to write. It also tells us who each visitor is, which is how admins are recognised. |
 | Auto-start | systemd | Built into the Pi. Starts the app on boot and restarts it if it crashes. |
 
 The whole app should use about 30 MB of memory. That's an estimate, not a measurement.
@@ -274,6 +274,56 @@ First jobs, in order:
 4. Own backup and restore. Check that a backup opens and has the data.
 5. Later, design the `events` table for pump control.
 
+## Beds and plantings
+
+Gardening admins keep a list of the garden's beds and what is growing in each. Everyone can view it. Only admins can add, edit or remove ([ADR 0003](docs/adr/0003-admins-by-tailscale-identity.md)). Not built yet: this section is the plan.
+
+A **bed** is one growing area, raised or in the ground. A **planting** is one crop in one bed, from the day it goes in until the day it comes out. When a crop is pulled out, the admin sets its removed date instead of deleting it. That keeps a history of what grew where, and lets the charts mark planting dates later. Delete is only for typing mistakes.
+
+Suggested tables, for the database developer to review:
+```sql
+CREATE TABLE beds (
+  id       INTEGER PRIMARY KEY,
+  name     TEXT NOT NULL UNIQUE,      -- "Bed 3"
+  location TEXT NOT NULL DEFAULT '',  -- "north fence, second from the gate"
+  notes    TEXT NOT NULL DEFAULT ''
+) STRICT;
+
+CREATE TABLE plantings (
+  id         INTEGER PRIMARY KEY,
+  bed_id     INTEGER NOT NULL REFERENCES beds(id),
+  plant      TEXT NOT NULL,             -- "Tomato"
+  variety    TEXT NOT NULL DEFAULT '',  -- "Roma"
+  planted_on TEXT NOT NULL,             -- "2026-04-15"
+  removed_on TEXT,                      -- empty while still growing
+  notes      TEXT NOT NULL DEFAULT '',
+  changed_by TEXT NOT NULL,             -- Tailscale login of the last admin to edit it
+  changed_at INTEGER NOT NULL           -- unix seconds
+) STRICT;
+```
+A bed that still has plantings can't be deleted. The API answers `409` instead.
+
+API:
+
+| Request | Who | Does |
+|---|---|---|
+| `GET /api/me` | anyone | `{"login":"sam@example.com","admin":true}`. `login` is `null` for someone without Tailscale. The website uses `admin` to show or hide edit buttons. |
+| `GET /api/beds` | anyone | All beds |
+| `GET /api/plantings` | anyone | All plantings. `?current=1` gives only those still growing. |
+| `POST /api/beds`, `POST /api/plantings` | admin | Add one. The body is the new row as JSON. |
+| `PATCH /api/beds/:id`, `PATCH /api/plantings/:id` | admin | Change the fields sent in the JSON body |
+| `DELETE /api/beds/:id`, `DELETE /api/plantings/:id` | admin | Remove one |
+
+Rust checks every input: names not empty, dates real, the bed exists. A bad input gives `400`, a viewer trying to change something gives `403`.
+
+**Admins.** The admin list lives on the Pi in `/etc/garden.env`, never in git:
+```sh
+GARDEN_ADMINS=sam@example.com,alex@example.com
+```
+Use each admin's Tailscale login, as shown in the Tailscale admin console. After changing it, run `sudo systemctl restart garden`. Each admin installs the Tailscale app on their phone and signs in once.
+
+**Website.** A Plants page lists the beds and what grows in each, readable on a phone in the garden. Admins also see add, edit and remove buttons with short forms. Later, a sensor card can name its bed, like "Soil · Bed 3 · Tomato".
+
 ## Folder layout
 
 ```
@@ -344,7 +394,7 @@ The backup runs every night at 03:00, or as soon as the Pi is back on if it was 
 
 ## Future: pump control
 
-Not built yet. Adding it takes a `pump` command in `sensors.py`, a `POST /api/pump` route in Rust, and a migration that adds an `events` table to log each run. Tailscale already keeps the controls private.
+Not built yet. Adding it takes a `pump` command in `sensors.py`, a `POST /api/pump` route in Rust, and a migration that adds an `events` table to log each run. Only admins may run the pump, using the same check as beds and plantings ([ADR 0003](docs/adr/0003-admins-by-tailscale-identity.md)).
 
 ## Add later
 
@@ -354,4 +404,8 @@ Not built yet. Adding it takes a `pump` command in `sensors.py`, a `POST /api/pu
 | Sensor code in Rust | A sensor has good Rust support and we want to drop Python. |
 | Cleanup of old data | The database grows past a few GB. |
 | MQTT | We add wireless sensors elsewhere in the garden. |
+| More roles than admin and viewer | Someone needs a role in between. Move the admin list into a database table. |
+| More than 6 viewers | Share the Pi with them from the Tailscale admin console. |
+| Public viewing | People without Tailscale should see the site. Turn on Tailscale Funnel, after writing an ADR, because sensor data becomes public too. |
+| Photos of plantings | Admins want them. Needs upload size limits and disk space on the Pi. |
 | USB SSD instead of the SD card | The SD card fails, or the app starts writing much more. |
