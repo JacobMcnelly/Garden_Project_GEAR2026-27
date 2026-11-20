@@ -356,7 +356,11 @@ Use each admin's Tailscale login, as shown in the Tailscale admin console. After
 gardening-project-gear-club/
 ├── server/                 # Rust
 │   ├── Cargo.toml
-│   └── src/main.rs         # website, schedule, database, runs Python
+│   └── src/
+│       ├── main.rs         # starts everything, lists the API routes
+│       ├── db.rs           # database, migrations, /api/history
+│       ├── sensors.rs      # runs sensors.py, every-minute recorder, /api/now
+│       └── garden.rs       # beds, plantings, admin check
 ├── sensors/                # Python
 │   ├── pyproject.toml      # libraries; uv.lock pins their versions
 │   ├── .python-version     # Python 3.13
