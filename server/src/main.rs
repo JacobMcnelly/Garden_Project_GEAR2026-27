@@ -363,7 +363,7 @@ fn login(headers: &HeaderMap) -> Option<&str> {
 /// The admin's login, or `403` for a viewer.
 fn admin(app: &App, headers: &HeaderMap) -> Result<String, ApiError> {
     login(headers)
-        .filter(|l| app.admins.iter().any(|a| a == l))
+        .filter(|l| app.admins.iter().any(|a| a.eq_ignore_ascii_case(l)))
         .map(String::from)
         .ok_or_else(|| err(StatusCode::FORBIDDEN, "admins only"))
 }
@@ -1098,6 +1098,7 @@ mod tests {
     async fn admin_check_uses_the_tailscale_header() {
         let app = app();
         assert_eq!(admin(&app, &sam()).unwrap(), "sam@example.com");
+        assert!(admin(&app, &as_user("Sam@Example.com")).is_ok()); // emails ignore case
         assert_eq!(
             admin(&app, &as_user("eve@example.com")).unwrap_err().0,
             StatusCode::FORBIDDEN
