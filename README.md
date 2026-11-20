@@ -12,7 +12,7 @@ A Raspberry Pi 4 in the garden reads the sensors every minute and saves the valu
 | Database | First version of the tables and queries is done. |
 | Sensors | Starter script with fake values. Sensors not chosen yet. |
 | Website | Not started. Charts (uPlot) and icons (Lucide) are chosen, the rest is open. |
-| Beds and plantings | Planned, see [Beds and plantings](ARCHITECTURE.md#beds-and-plantings). |
+| Beds and plantings | Built in the server. Website pages not started. See [Beds and plantings](ARCHITECTURE.md#beds-and-plantings). |
 | Pi install | Scripts written, not yet tried on the Pi. |
 
 ## Where to start

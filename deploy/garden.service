@@ -8,6 +8,8 @@ After=time-sync.target network-online.target
 User=garden
 Group=garden
 WorkingDirectory=/opt/garden
+# GARDEN_ADMINS lives here, on the Pi only, because the repo is public (docs/adr/0003-admins-by-tailscale-identity.md).
+EnvironmentFile=-/etc/garden.env
 ExecStart=/opt/garden/garden
 Restart=on-failure
 RestartSec=5

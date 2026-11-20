@@ -126,6 +126,7 @@ The server listens only on `127.0.0.1:8080`, and people reach it through `tailsc
 | `GET /` | The website |
 | `GET /api/now` | A live snapshot, not saved |
 | `GET /api/history?from=<unix s>&to=<unix s>` | Saved readings, averaged to at most 1000 points per sensor |
+| `/api/me`, `/api/beds`, `/api/plantings` | See [Beds and plantings](#beds-and-plantings) |
 
 `/api/now`:
 ```json
@@ -141,7 +142,7 @@ The server listens only on `127.0.0.1:8080`, and people reach it through `tailsc
 
 ### For the website developer
 
-The website only needs the two API calls above. Charts use uPlot and icons use Lucide. Everything else is your choice, with one rule: `bun run build` must produce plain files in `web/dist/`, which the Rust program serves. So no server-rendered frameworks like Next.js. They need a JavaScript runtime on the Pi and gain us nothing.
+The sensor pages only need the two API calls above. The Plants page uses the routes in [Beds and plantings](#beds-and-plantings). Charts use uPlot and icons use Lucide. Everything else is your choice, with one rule: `bun run build` must produce plain files in `web/dist/`, which the Rust program serves. So no server-rendered frameworks like Next.js. They need a JavaScript runtime on the Pi and gain us nothing.
 
 #### Suggested website stack
 
@@ -205,10 +206,14 @@ All SQL lives in `db/` as plain `.sql` files. Rust builds them into the program 
 
 ```
 db/
-├── migrations/0001_init.sql   # tables
+├── migrations/
+│   ├── 0001_init.sql          # sensors and readings
+│   └── 0002_beds.sql          # beds and plantings
 ├── insert_reading.sql
 ├── upsert_sensor.sql
-└── history.sql                # the bucket query
+├── history.sql                # the bucket query
+├── list_beds.sql, find_bed.sql, insert_bed.sql, update_bed.sql, delete_bed.sql
+└── list_plantings.sql, find_planting.sql, insert_planting.sql, update_planting.sql, delete_planting.sql
 ```
 
 On startup, Rust runs every file in `db/migrations/` whose number is above `PRAGMA user_version`, each in its own transaction, then sets `user_version`. Never edit a migration that has already run on the Pi. Add a new one.
@@ -276,11 +281,11 @@ First jobs, in order:
 
 ## Beds and plantings
 
-Gardening admins keep a list of the garden's beds and what is growing in each. Everyone can view it. Only admins can add, edit or remove ([ADR 0003](docs/adr/0003-admins-by-tailscale-identity.md)). Not built yet: this section is the plan.
+Gardening admins keep a list of the garden's beds and what is growing in each. Everyone can view it. Only admins can add, edit or remove ([ADR 0003](docs/adr/0003-admins-by-tailscale-identity.md)). The server part is built. The website pages are not started.
 
 A **bed** is one growing area, raised or in the ground. A **planting** is one crop in one bed, from the day it goes in until the day it comes out. When a crop is pulled out, the admin sets its removed date instead of deleting it. That keeps a history of what grew where, and lets the charts mark planting dates later. Delete is only for typing mistakes.
 
-Suggested tables, for the database developer to review:
+Tables, in `db/migrations/0002_beds.sql`:
 ```sql
 CREATE TABLE beds (
   id       INTEGER PRIMARY KEY,
@@ -314,7 +319,28 @@ API:
 | `PATCH /api/beds/:id`, `PATCH /api/plantings/:id` | admin | Change the fields sent in the JSON body |
 | `DELETE /api/beds/:id`, `DELETE /api/plantings/:id` | admin | Remove one |
 
-Rust checks every input: names not empty, dates real, the bed exists. A bad input gives `400`, a viewer trying to change something gives `403`.
+JSON fields use the column names. A bed:
+```json
+{"id":1,"name":"Bed 3","location":"north fence","notes":""}
+```
+A planting:
+```json
+{"id":1,"bed_id":1,"plant":"Tomato","variety":"Roma","planted_on":"2026-04-15","removed_on":null,"notes":"","changed_by":"sam@example.com","changed_at":1763020800}
+```
+- `POST` takes the same fields without `id`, `changed_by` and `changed_at`, which the server sets. A bed needs `name`. A planting needs `bed_id`, `plant` and `planted_on`. Left-out text fields become `""`, and a left-out `removed_on` becomes `null`. Unknown fields are ignored, so check spelling. The reply is `201` with the new row.
+- `PATCH` takes only the fields to change. A field left out stays as it was. `"removed_on":null` clears the removed date, for a crop marked as removed by mistake. The reply is the changed row.
+- `DELETE` replies `204` with no body.
+- Every planting change stores the admin's login in `changed_by` and the time in `changed_at`.
+
+Rust checks every input. Names and `plant` can't be empty, and spaces around them are trimmed. Dates must be real days written as `YYYY-MM-DD`. `removed_on` can't be before `planted_on`. `bed_id` must be an existing bed.
+
+| Reply | When |
+|---|---|
+| `400` | Bad input, with a short reason like `{"error":"planted_on must be a real date like 2026-04-15"}` |
+| `403` | A viewer tried to change something: `{"error":"admins only"}` |
+| `404` | No bed or planting with that id |
+| `409` | A bed with that name already exists, or deleting a bed that still has plantings: `{"error":"bed still has plantings"}` |
+| `415` | The body isn't sent as `Content-Type: application/json` |
 
 **Admins.** The admin list lives on the Pi in `/etc/garden.env`, never in git:
 ```sh
